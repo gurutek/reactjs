@@ -1,0 +1,94 @@
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.nodes.Node;
+import org.jsoup.nodes.TextNode;
+
+import java.util.Stack;
+
+public class StackToJsonObject {
+    public static void main(String[] args) {
+        String html = "<p>i<strong> am</strong> there<strong><em> test</em></strong></p>";
+
+        Stack<StackItem> stack = parseHtmlToStack(html);
+
+        JSONObject jsonObject = convertStackToJson(stack);
+
+        System.out.println(jsonObject.toString());
+    }
+
+    private static Stack<StackItem> parseHtmlToStack(String html) {
+        Stack<StackItem> stack = new Stack<>();
+        Document doc = Jsoup.parse(html);
+        Element body = doc.body();
+        parseNodes(body.childNodes(), stack);
+        return stack;
+    }
+
+    private static void parseNodes(Iterable<Node> nodes, Stack<StackItem> stack) {
+        for (Node node : nodes) {
+            if (node instanceof TextNode) {
+                String text = ((TextNode) node).text();
+                stack.push(new StackItem(StackItemType.TEXT, text));
+            } else if (node instanceof Element) {
+                Element element = (Element) node;
+                stack.push(new StackItem(StackItemType.TAG_OPEN, element.tagName()));
+                parseNodes(element.childNodes(), stack);
+                stack.push(new StackItem(StackItemType.TAG_CLOSE, element.tagName()));
+            }
+        }
+    }
+
+    private static JSONObject convertStackToJson(Stack<StackItem> stack) {
+        Stack<JSONObject> objectStack = new Stack<>();
+        JSONArray jsonArray = new JSONArray();
+        
+        while (!stack.isEmpty()) {
+            StackItem item = stack.pop();
+            if (item.type == StackItemType.TEXT) {
+                jsonArray.put(item.value);
+            } else if (item.type == StackItemType.TAG_CLOSE) {
+                JSONObject obj = new JSONObject();
+                obj.put("type", "text");
+                obj.put("text", jsonArray);
+                jsonArray = new JSONArray();
+                obj.put("type", "rich_text_section");
+                objectStack.push(obj);
+            } else if (item.type == StackItemType.TAG_OPEN) {
+                JSONObject obj = new JSONObject();
+                obj.put("type", "text");
+                obj.put("text", item.value);
+                objectStack.push(obj);
+            }
+        }
+        
+        JSONObject finalObj = new JSONObject();
+        finalObj.put("type", "rich_text");
+        JSONArray elementsArray = new JSONArray();
+        while (!objectStack.isEmpty()) {
+            elementsArray.put(objectStack.pop());
+        }
+        finalObj.put("elements", elementsArray);
+
+        return finalObj;
+    }
+}
+
+class StackItem {
+    StackItemType type;
+    String value;
+
+    StackItem(StackItemType type, String value) {
+        this.type = type;
+        this.value = value;
+    }
+}
+
+enum StackItemType {
+    TAG_OPEN,
+    TAG_CLOSE,
+    TEXT
+}
