@@ -1,0 +1,107 @@
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.nodes.Node;
+import org.jsoup.nodes.TextNode;
+
+import java.util.*;
+
+public class QueueToTextWithParents {
+    public static void main(String[] args) {
+        String html = "<p>i<a href=\"#\">example</a> there<strong><em> test</em></strong></p><p> ghh<em>ghhhj</em> ghjjjj <strong> ghhh</strong></p>";
+
+        Queue<QueueItem> queue = parseHtmlToQueue(html);
+
+        Map<String, List<String>> textWithParents = convertQueueToTextWithParents(queue);
+
+        for (Map.Entry<String, List<String>> entry : textWithParents.entrySet()) {
+            System.out.println("Text: " + entry.getKey() + ", Parents: " + entry.getValue());
+        }
+    }
+
+    private static Queue<QueueItem> parseHtmlToQueue(String html) {
+        Queue<QueueItem> queue = new LinkedList<>();
+        Document doc = Jsoup.parse(html);
+        Element body = doc.body();
+        parseNodes(body.childNodes(), queue, new ArrayList<>());
+        return queue;
+    }
+
+    private static void parseNodes(Iterable<Node> nodes, Queue<QueueItem> queue, List<String> parents) {
+        for (Node node : nodes) {
+            if (node instanceof TextNode) {
+                String text = ((TextNode) node).text();
+                if (!text.trim().isEmpty()) {
+                    queue.offer(new QueueItem(QueueItemType.TEXT, text, new ArrayList<>(parents)));
+                }
+            } else if (node instanceof Element) {
+                Element element = (Element) node;
+                String tagName = element.tagName();
+                if ("a".equals(tagName)) {
+                    String text = element.text();
+                    String link = element.attr("href");
+                    String linkText = text + " (" + link + ")";
+                    queue.offer(new QueueItem(QueueItemType.TAG_OPEN, tagName, new ArrayList<>(parents)));
+                    queue.offer(new QueueItem(QueueItemType.TEXT, linkText, new ArrayList<>(parents)));
+                    parseNodes(element.childNodes(), queue, parents);
+                    queue.offer(new QueueItem(QueueItemType.TAG_CLOSE, tagName, new ArrayList<>(parents)));
+                } else {
+                    parents.add(tagName);
+                    queue.offer(new QueueItem(QueueItemType.TAG_OPEN, tagName, new ArrayList<>(parents)));
+                    parseNodes(element.childNodes(), queue, parents);
+                    parents.remove(parents.size() - 1);
+                    queue.offer(new QueueItem(QueueItemType.TAG_CLOSE, tagName, new ArrayList<>(parents)));
+                }
+            }
+        }
+    }
+
+    private static Map<String, List<String>> convertQueueToTextWithParents(Queue<QueueItem> queue) {
+        Map<String, List<String>> textWithParents = new HashMap<>();
+        Set<String> openTags = new HashSet<>();
+
+        while (!queue.isEmpty()) {
+            QueueItem item = queue.poll();
+            if (item.type == QueueItemType.TEXT) {
+                if (item.value.equals("\n")) {
+                    continue;
+                }
+                StringBuilder parentsBuilder = new StringBuilder();
+                for (String parent : item.parents) {
+                    parentsBuilder.append(parent).append(" ");
+                }
+                textWithParents.put(item.value, Arrays.asList(parentsBuilder.toString().trim().split(" ")));
+            } else if (item.type == QueueItemType.TAG_OPEN) {
+                openTags.add(item.value);
+            } else if (item.type == QueueItemType.TAG_CLOSE) {
+                if (!openTags.isEmpty()) {
+                    openTags.remove(item.value);
+                }
+                // Remove the last parent when encountering a closing tag
+                if (!item.parents.isEmpty()) {
+                    item.parents.remove(item.parents.size() - 1);
+                }
+            }
+        }
+
+        return textWithParents;
+    }
+}
+
+class QueueItem {
+    QueueItemType type;
+    String value;
+    List<String> parents;
+
+    QueueItem(QueueItemType type, String value, List<String> parents) {
+        this.type = type;
+        this.value = value;
+        this.parents = parents;
+    }
+}
+
+enum QueueItemType {
+    TAG_OPEN,
+    TAG_CLOSE,
+    TEXT
+}
