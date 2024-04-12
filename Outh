@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google OAuth</title>
+</head>
+<body>
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+        <h2 id="oauthMessage" style="display: none;">Click the button to grant Google OAuth permission:</h2>
+        <button id="oauthButton" style="display: none; background-color: #4CAF50; border: none; color: white; padding: 15px 32px; text-align: center; text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer;">Grant Permission</button>
+        <p>If you encounter any issues, feel free to reach out via email.</p>
+        <p>Thank you!</p>
+    </div>
+
+    <script>
+        chrome.identity.getAuthToken({ interactive: false }, function(token) {
+            if (chrome.runtime.lastError || !token) {
+                // OAuth permission not granted or token not available
+                // Show authentication message and button
+                document.getElementById('oauthMessage').style.display = 'block';
+                document.getElementById('oauthButton').style.display = 'block';
+            } else {
+                // OAuth permission already granted
+                // Proceed with token or further actions
+                console.log('OAuth token:', token);
+            }
+        });
+
+        document.getElementById('oauthButton').addEventListener('click', function() {
+            chrome.identity.getAuthToken({ interactive: true }, function(token) {
+                if (chrome.runtime.lastError) {
+                    console.error(chrome.runtime.lastError.message);
+                } else {
+                    console.log('OAuth token:', token);
+                    // Handle token retrieval or further actions here
+                    // You may also hide the authentication message and button after successful authentication
+                    document.getElementById('oauthMessage').style.display = 'none';
+                    document.getElementById('oauthButton').style.display = 'none';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
