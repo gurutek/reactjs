@@ -1,0 +1,70 @@
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import javax.annotation.Resource;
+import javax.servlet.RequestDispatcher;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+
+@Controller
+public class StaticFileController {
+
+    @Resource
+    private ResourceHttpRequestHandler resourceHandler;
+
+    @Value("${main-server.static.base-path}")
+    private String mainServerBasePath;
+
+    @Value("${second-server.static.base-path}")
+    private String secondServerBasePath;
+
+    @GetMapping("/static/**")
+    public ResponseEntity<Resource> getStaticFile(HttpServletRequest request, HttpServletResponse response,
+                                                   @RequestHeader(value = "X-Forwarded-Host", required = false) String forwardedHost) throws IOException {
+        String filePath = request.getRequestURI().substring("/static".length());
+
+        Resource resource = loadResource(filePath);
+
+        if (resource != null && resource.exists()) {
+            return ResponseEntity.ok().body(resource);
+        } else {
+            // Check if the request has already been forwarded
+            Boolean forwarded = (Boolean) request.getAttribute("forwarded");
+            if (forwarded != null && forwarded) {
+                // If it has, return a 404 error to avoid a loop
+                return ResponseEntity.notFound().build();
+            }
+            // Rewrite the request URL and forward internally
+            rewriteAndForwardRequest(request, response, "/static" + filePath);
+            return null; // Return null to indicate that the response has been handled
+        }
+    }
+
+    private Resource loadResource(String filePath) {
+        // Attempt to load the resource from the main server's static files directory
+        Resource resource = new FileSystemResource(mainServerBasePath + filePath);
+
+        // If the resource doesn't exist in the main server, return null
+        if (!resource.exists()) {
+            return null;
+        }
+
+        return resource;
+    }
+
+    private void rewriteAndForwardRequest(HttpServletRequest request, HttpServletResponse response, String path) throws IOException {
+        try {
+            request.setAttribute("forwarded", true); // Mark the request as forwarded
+            RequestDispatcher dispatcher = request.getRequestDispatcher(path);
+            dispatcher.forward(request, response);
+        } catch (Exception e) {
+            // Handle exception
+        }
+    }
+}
