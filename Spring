@@ -1,0 +1,100 @@
+package com.example.apikeyauth.entity;
+
+import lombok.Data;
+
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.GenerationType;
+import javax.persistence.Id;
+
+@Data
+@Entity
+public class ApiKey {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private String apiKey;
+    private String apiSecret;
+}
+package com.example.apikeyauth.repository;
+
+import com.example.apikeyauth.entity.ApiKey;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.Optional;
+
+@Repository
+public interface ApiKeyRepository extends JpaRepository<ApiKey, Long> {
+    Optional<ApiKey> findByApiKeyAndApiSecret(String apiKey, String apiSecret);
+}
+
+package com.example.apikeyauth.service;
+
+import com.example.apikeyauth.entity.ApiKey;
+import com.example.apikeyauth.repository.ApiKeyRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+@Service
+@RequiredArgsConstructor
+public class ApiKeyService {
+    private final ApiKeyRepository apiKeyRepository;
+
+    public boolean isValidApiKey(String apiKey, String apiSecret) {
+        return apiKeyRepository.findByApiKeyAndApiSecret(apiKey, apiSecret).isPresent();
+    }
+}
+
+package com.example.apikeyauth.util;
+
+import com.example.apikeyauth.service.ApiKeyService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.web.server.authentication.AuthenticationWebFilter;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatcher;
+import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatchers;
+import org.springframework.stereotype.Component;
+import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.server.ServerWebFilterChain;
+import org.springframework.web.server.WebFilter;
+import reactor.core.publisher.Mono;
+
+@Component
+@RequiredArgsConstructor
+public class ApiKeyFilter implements WebFilter {
+
+    private final ApiKeyService apiKeyService;
+
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, ServerWebFilterChain chain) {
+        String apiKey = exchange.getRequest().getHeaders().getFirst("apiKey");
+        String apiSecret = exchange.getRequest().getHeaders().getFirst("apiSecret");
+
+        if (apiKey != null && apiSecret != null && apiKeyService.isValidApiKey(apiKey, apiSecret)) {
+            return chain.filter(exchange);
+        } else {
+            exchange.getResponse().setStatusCode(HttpStatus.UNAUTHORIZED);
+            return exchange.getResponse().setComplete();
+        }
+    }
+}
+
+
+package com.example.apikeyauth.controller;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import reactor.core.publisher.Mono;
+
+@RestController
+@RequestMapping("/api")
+public class ApiController {
+
+    @GetMapping("/test")
+    public Mono<String> test() {
+        return Mono.just("API Key Authentication Successful!");
+    }
+}
