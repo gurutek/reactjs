@@ -1,0 +1,117 @@
+import React, { useEffect, useRef } from 'react';
+import LazyLoad from 'react-lazy-load-image-component';
+import 'react-lazy-load-image-component/src/effects/blur.css';
+import Button from '@mui/material/Button';
+import './AnimatedLogoTitle.css'; // Import CSS file for styles and animations
+
+const AnimatedLogoTitle = ({ logoSrc, title }) => {
+  const titleRef = useRef(null);
+
+  useEffect(() => {
+    const animateTitle = () => {
+      const titleElement = titleRef.current;
+      titleElement.innerHTML = '';  // Clear any existing letters
+
+      title.split('').forEach((letter, index) => {
+        const span = document.createElement('span');
+        span.className = 'letter';
+        span.textContent = letter;
+        titleElement.appendChild(span);
+      });
+
+      setTimeout(() => {
+        const letters = titleElement.querySelectorAll('.letter');
+        letters.forEach(letter => {
+          if (Math.random() > 0.5) {
+            letter.classList.add('bounce');
+          }
+        });
+      }, 100); // Add bounce animation after letters are added
+
+      setTimeout(() => {
+        letters.forEach(letter => {
+          letter.classList.add('fadeOut');
+        });
+      }, title.length * 100 + 500); // Add fade out after animation
+
+      setTimeout(() => {
+        animateTitle(); // Restart the animation
+      }, title.length * 100 + 1000);
+    };
+
+    animateTitle();
+  }, [title]);
+
+  return (
+    <Button variant="contained" disableElevation className="animated-logo-title">
+      <LazyLoad
+        height={50}
+        width={50}
+        debounceTime={500}
+        placeholder={<img src={logoSrc} alt="Logo" className="logo" />}
+        src={logoSrc}
+        effect="blur"
+      />
+      <span ref={titleRef} className="title">{title}</span>
+    </Button>
+  );
+};
+
+export default AnimatedLogoTitle;
+.animated-logo-title {
+  display: flex;
+  align-items: center;
+  padding: 20px;
+}
+
+.logo {
+  height: 50px;
+  margin-right: 10px;
+}
+
+.title {
+  font-size: 1.5rem;
+}
+
+@keyframes slideIn {
+  0% {
+    transform: translateX(-50px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes fadeOut {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.letter {
+  display: inline-block;
+  opacity: 0;
+  animation: slideIn 0.5s forwards;
+}
+
+.bounce {
+  animation: bounce 2s infinite;
+}
+
+.fadeOut {
+  animation: fadeOut 0.5s forwards;
+}
