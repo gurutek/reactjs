@@ -1,0 +1,65 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { LazyLoadImage } from 'react-lazy-load-image-component';
+import 'react-lazy-load-image-component/src/effects/blur.css';
+import './AnimatedLogoTitle.css'; // Import CSS file for styles and animations
+
+const AnimatedLogoTitle = ({ logoSrc, title }) => {
+  const titleRef = useRef(null);
+  const [iteration, setIteration] = useState(0);
+
+  useEffect(() => {
+    const animateTitle = () => {
+      const titleElement = titleRef.current;
+      titleElement.innerHTML = '';  // Clear any existing letters
+
+      title.split('').forEach((letter, index) => {
+        const span = document.createElement('span');
+        span.className = 'letter';
+        span.style.animationDelay = `${index * 0.1}s`;
+        span.textContent = letter;
+        titleElement.appendChild(span);
+      });
+
+      setTimeout(() => {
+        const letters = titleElement.querySelectorAll('.letter');
+        letters.forEach((letter, index) => {
+          if ((iteration % 2 === 0 && index % 2 === 0) || (iteration % 2 !== 0 && index % 2 !== 0)) {
+            letter.classList.add('bounce');
+            letter.classList.add('bounce-color'); // Add color change for bouncing letters
+          }
+        });
+      }, title.length * 100); // Add bounce animation after letters are added
+
+      setTimeout(() => {
+        const letters = titleElement.querySelectorAll('.letter');
+        letters.forEach(letter => {
+          letter.classList.add('fadeOut');
+        });
+      }, title.length * 100 + 2500); // Add fade out after animation
+
+      setTimeout(() => {
+        setIteration(prev => prev + 1);
+        animateTitle(); // Restart the animation
+      }, title.length * 100 + 3000); // Adjust timing for continuous loop
+    };
+
+    animateTitle();
+  }, [title, iteration]);
+
+  return (
+    <div className="animated-logo-title-container">
+      <LazyLoadImage
+        height={50}
+        width={50}
+        placeholderSrc={logoSrc}
+        src={logoSrc}
+        effect="blur"
+        className="logo"
+        alt="Logo"
+      />
+      <span ref={titleRef} className="title">{title}</span>
+    </div>
+  );
+};
+
+export default AnimatedLogoTitle;
