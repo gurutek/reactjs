@@ -1,0 +1,127 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { LazyLoadImage } from 'react-lazy-load-image-component';
+import 'react-lazy-load-image-component/src/effects/blur.css';
+import './AnimatedLogoTitle.css'; // Import CSS file for styles and animations
+
+const AnimatedLogoTitle = ({ logoSrc, title }) => {
+  const titleRef = useRef(null);
+  const [iteration, setIteration] = useState(0);
+
+  useEffect(() => {
+    const animateTitle = () => {
+      const titleElement = titleRef.current;
+      titleElement.innerHTML = '';  // Clear any existing letters
+
+      title.split('').forEach((letter, index) => {
+        const span = document.createElement('span');
+        span.className = 'letter';
+        span.style.animationDelay = `${index * 0.1}s`;
+        span.textContent = letter;
+        titleElement.appendChild(span);
+      });
+
+      setTimeout(() => {
+        const letters = titleElement.querySelectorAll('.letter');
+        letters.forEach((letter, index) => {
+          if ((iteration % 2 === 0 && index % 2 === 0) || (iteration % 2 !== 0 && index % 2 !== 0)) {
+            letter.classList.add('bounce');
+            letter.classList.add('bounce-color'); // Add color change for bouncing letters
+          }
+        });
+      }, title.length * 100); // Add bounce animation after letters are added
+
+      setTimeout(() => {
+        const letters = titleElement.querySelectorAll('.letter');
+        letters.forEach(letter => {
+          letter.classList.add('fadeOut');
+        });
+      }, title.length * 100 + 2500); // Add fade out after animation
+
+      setTimeout(() => {
+        setIteration(prev => prev + 1);
+        animateTitle(); // Restart the animation
+      }, title.length * 100 + 3000); // Adjust timing for continuous loop
+    };
+
+    animateTitle();
+  }, [title, iteration]);
+
+  return (
+    <div className="animated-logo-title-container">
+      <LazyLoadImage
+        height={50}
+        width={50}
+        debounceTime={500}
+        placeholderSrc={logoSrc}
+        src={logoSrc}
+        effect="blur"
+        className="logo"
+        alt="Logo"
+      />
+      <span ref={titleRef} className="title">{title}</span>
+    </div>
+  );
+};
+
+export default AnimatedLogoTitle;
+.animated-logo-title-container {
+  display: flex;
+  align-items: center;
+  padding: 20px;
+}
+
+.logo {
+  height: 50px;
+  margin-right: 10px;
+}
+
+.title {
+  font-size: 1.5rem;
+}
+
+@keyframes slideIn {
+  0% {
+    transform: translateX(-50px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes fadeOut {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.letter {
+  display: inline-block;
+  opacity: 0;
+  animation: slideIn 0.5s forwards;
+}
+
+.bounce {
+  animation: bounce 2s infinite;
+}
+
+.bounce-color {
+  color: red; /* Change to the desired color for bouncing letters */
+}
+
+.fadeOut {
+  animation: fadeOut 0.5s forwards;
+}
