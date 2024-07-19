@@ -1,0 +1,284 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template to provision resources for a short link resolution app with restricted public access.
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: VPC ID where resources will be deployed
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of Subnet IDs in the VPC
+
+  DBUsername:
+    Type: String
+    Description: The database admin account username
+
+  DBPassword:
+    Type: String
+    Description: The database admin account password
+    NoEcho: true
+
+  RedisHost:
+    Type: String
+    Description: The Redis host address
+
+  RedisPort:
+    Type: Number
+    Description: The Redis port number
+    Default: 6379
+
+Resources:
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Security group for public access to ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  PrivateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Security group for internal access to RDS and ElastiCache
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref PublicSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref PublicSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: ShortLinkALB
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref PublicSecurityGroup
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+
+  ALBListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  ALBListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Protocol: HTTPS
+      Port: 443
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      TargetType: lambda
+      Targets:
+        - Id: !Ref LambdaFunction
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ShortLinkResolver
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const redis = require('redis');
+          const { Client } = require('pg');
+
+          exports.handler = async (event) => {
+            const shortLink = event.pathParameters.short_id;
+            const client = redis.createClient({
+              host: process.env.REDIS_HOST,
+              port: process.env.REDIS_PORT
+            });
+
+            return new Promise((resolve, reject) => {
+              client.get(shortLink, async (err, reply) => {
+                if (reply) {
+                  resolve({
+                    statusCode: 302,
+                    headers: {
+                      Location: reply
+                    }
+                  });
+                } else {
+                  const dbClient = new Client({
+                    user: process.env.DB_USER,
+                    host: process.env.DB_HOST,
+                    database: process.env.DB_NAME,
+                    password: process.env.DB_PASSWORD,
+                    port: process.env.DB_PORT
+                  });
+
+                  try {
+                    await dbClient.connect();
+                    const res = await dbClient.query('SELECT original_link FROM links WHERE short_link = $1', [shortLink]);
+
+                    if (res.rows.length > 0) {
+                      const originalLink = res.rows[0].original_link;
+                      client.set(shortLink, originalLink);
+                      resolve({
+                        statusCode: 302,
+                        headers: {
+                          Location: originalLink
+                        }
+                      });
+                    } else {
+                      resolve({
+                        statusCode: 404,
+                        body: JSON.stringify({ message: 'Link not found' })
+                      });
+                    }
+                  } catch (error) {
+                    reject({
+                      statusCode: 500,
+                      body: JSON.stringify({ message: 'Internal Server Error' })
+                    });
+                  } finally {
+                    await dbClient.end();
+                  }
+                }
+              });
+            });
+          };
+      Runtime: nodejs18.x
+      Timeout: 10
+      MemorySize: 512
+      Environment:
+        Variables:
+          REDIS_HOST: !Ref RedisHost
+          REDIS_PORT: !Ref RedisPort
+          DB_HOST: !GetAtt RDSInstance.Endpoint.Address
+          DB_PORT: '5432'
+          DB_USER: !Ref DBUsername
+          DB_PASSWORD: !Ref DBPassword
+          DB_NAME: 'your_db_name'
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: elasticloadbalancing.amazonaws.com
+      SourceArn: !GetAtt ALBListenerHTTPS.ListenerArn
+
+  LambdaProvisionedConcurrencyConfig:
+    Type: AWS::Lambda::ProvisionedConcurrencyConfig
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      ProvisionedConcurrentExecutions: 5
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: shortlinkdb
+      DBInstanceClass: db.t3.large
+      Engine: postgres
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      AllocatedStorage: 50
+      VPCSecurityGroups:
+        - !Ref PrivateSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS instance
+      SubnetIds: !Ref SubnetIds
+
+  ElastiCache:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      CacheNodeType: cache.t3.medium
+      NumCacheNodes: 1
+      Engine: redis
+      VpcSecurityGroupIds:
+        - !Ref PrivateSecurityGroup
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Subnet group for ElastiCache instance
+      SubnetIds: !Ref SubnetIds
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: lambda-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeInstances
+                  - ec2:AttachNetworkInterface
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - rds-db:connect
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - elasticache:*
+                Resource: '*'
+
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/ShortLinkResolver
+      RetentionInDays: 30
