@@ -1,0 +1,299 @@
+Here’s the revised CloudFormation template with the missing username and password for Redis ElastiCache and PostgreSQL DB instances. This ensures that the Lambda function has the necessary environment variables and the Redis and RDS instances are configured properly.
+
+### Full CloudFormation Template
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template to provision resources for a short link resolution app with restricted access.
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: VPC ID where resources will be deployed
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of Subnet IDs in the VPC
+
+  DBUsername:
+    Type: String
+    Description: The database admin account username
+
+  DBPassword:
+    Type: String
+    Description: The database admin account password
+    NoEcho: true
+
+  RedisUsername:
+    Type: String
+    Description: The Redis username
+
+  RedisPassword:
+    Type: String
+    Description: The Redis password
+    NoEcho: true
+
+Resources:
+  # Public Resources
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for public access to ELB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  ELB:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      LoadBalancerName: ShortLinkELB
+      Subnets: !Ref SubnetIds
+      SecurityGroups:
+        - !Ref PublicSecurityGroup
+      Listeners:
+        - LoadBalancerPort: 80
+          InstancePort: 80
+          Protocol: HTTP
+        - LoadBalancerPort: 443
+          InstancePort: 443
+          Protocol: HTTPS
+      HealthCheck:
+        Target: HTTP:80/
+        Interval: 30
+        Timeout: 5
+        UnhealthyThreshold: 2
+        HealthyThreshold: 10
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ShortLinkResolver
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const redis = require('redis');
+          const { Client } = require('pg');
+
+          exports.handler = async (event) => {
+            const shortLink = event.pathParameters.short_id;
+            const client = redis.createClient({
+              host: process.env.REDIS_HOST,
+              port: process.env.REDIS_PORT,
+              password: process.env.REDIS_PASSWORD
+            });
+
+            return new Promise((resolve, reject) => {
+              client.get(shortLink, async (err, reply) => {
+                if (reply) {
+                  resolve({
+                    statusCode: 302,
+                    headers: {
+                      Location: reply
+                    }
+                  });
+                } else {
+                  const dbClient = new Client({
+                    user: process.env.DB_USER,
+                    host: process.env.DB_HOST,
+                    database: process.env.DB_NAME,
+                    password: process.env.DB_PASSWORD,
+                    port: process.env.DB_PORT
+                  });
+
+                  try {
+                    await dbClient.connect();
+                    const res = await dbClient.query('SELECT original_link FROM links WHERE short_link = $1', [shortLink]);
+
+                    if (res.rows.length > 0) {
+                      const originalLink = res.rows[0].original_link;
+                      client.set(shortLink, originalLink);
+                      resolve({
+                        statusCode: 302,
+                        headers: {
+                          Location: originalLink
+                        }
+                      });
+                    } else {
+                      resolve({
+                        statusCode: 404,
+                        body: JSON.stringify({ message: 'Link not found' })
+                      });
+                    }
+                  } catch (error) {
+                    reject({
+                      statusCode: 500,
+                      body: JSON.stringify({ message: 'Internal Server Error' })
+                    });
+                  } finally {
+                    await dbClient.end();
+                  }
+                }
+              });
+            });
+          };
+      Runtime: nodejs18.x
+      Timeout: 10
+      MemorySize: 512
+      Environment:
+        Variables:
+          REDIS_HOST: !Ref RedisHost
+          REDIS_PORT: !Ref RedisPort
+          REDIS_PASSWORD: !Ref RedisPassword
+          DB_HOST: !GetAtt RDSInstance.Endpoint.Address
+          DB_PORT: '5432'
+          DB_USER: !Ref DBUsername
+          DB_PASSWORD: !Ref DBPassword
+          DB_NAME: 'your_db_name'
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: elasticloadbalancing.amazonaws.com
+      SourceArn: !GetAtt ELB.LoadBalancerName
+
+  LambdaProvisionedConcurrencyConfig:
+    Type: AWS::Lambda::ProvisionedConcurrencyConfig
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      ProvisionedConcurrentExecutions: 5
+
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/ShortLinkResolver
+      RetentionInDays: 30
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: lambda-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeInstances
+                  - ec2:AttachNetworkInterface
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - rds-db:connect
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - elasticache:*
+                Resource: '*'
+
+  # Private Resources
+  PrivateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Security group for internal access to RDS and ElastiCache
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda function to access private resources
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: shortlinkdb
+      DBInstanceClass: db.t3.large
+      Engine: postgres
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      AllocatedStorage: 50
+      VPCSecurityGroups:
+        - !Ref PrivateSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      MultiAZ: false
+      StorageType: gp2
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS instance
+      SubnetIds: !Ref SubnetIds
+
+  AuroraDBCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      Engine: aurora-postgresql
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref AuroraDBSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref PrivateSecurityGroup
+      StorageEncrypted: true
+
+  AuroraDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.large
+      DBClusterIdentifier: !Ref AuroraDBCluster
+      Engine: aurora-postgresql
+      DBInstanceIdentifier: shortlink-aurora-instance
+
+  AuroraDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Aurora DB cluster
+      SubnetIds: !Ref SubnetIds
+
+  RedisCacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
