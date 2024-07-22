@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: CloudFormation template for RDS Aurora PostgreSQL and ElastiCache Redis in a non-production environment.
+
+Parameters:
+  VPCID:
+    Type: AWS::EC2::VPC::Id
+    Description: ID of the existing VPC
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of subnet IDs in the VPC
+
+  RdsSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group ID for RDS
+
+  CacheSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group ID for ElastiCache Redis
+
+  MasterUsername:
+    Type: String
+    Description: Master username for Aurora PostgreSQL
+
+  MasterPassword:
+    Type: String
+    NoEcho: true
+    Description: Master password for Aurora PostgreSQL
+
+  DBInstanceClass:
+    Type: String
+    Default: db.r5.large
+    Description: Instance class for Aurora PostgreSQL
+
+  CacheNodeType:
+    Type: String
+    Default: cache.r5.large
+    Description: Node type for ElastiCache Redis
+
+Globals:
+  SecurityGroup:
+    Properties:
+      VpcId: !Ref VPCID
+
+Resources:
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Aurora PostgreSQL
+      VpcId: !Ref VPCID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroupID
+
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ElastiCache Redis
+      VpcId: !Ref VPCID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref LambdaSecurityGroupID
+
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: shortlink-cluster
+      Engine: aurora-postgresql
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: !Ref MasterPassword
+      VpcSecurityGroupIds:
+        - !Ref DBSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      BackupRetentionPeriod: 7
+      PubliclyAccessible: false
+
+  AuroraInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: aurora-postgresql
+      DBClusterIdentifier: !Ref AuroraCluster
+      PubliclyAccessible: false
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Aurora PostgreSQL
+      SubnetIds: !Ref SubnetIds
+
+  ElastiCacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      CacheNodeType: !Ref CacheNodeType
+      Engine: redis
+      NumCacheNodes: 1
+      ClusterName: shortlink-cache
+      VpcSecurityGroupIds:
+        - !Ref CacheSecurityGroup
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: shortlink-cache-subnet-group
+      Description: Subnet group for ElastiCache Redis
+      SubnetIds: !Ref SubnetIds
+
+Outputs:
+  AuroraClusterEndpoint:
+    Description: Endpoint of the Aurora PostgreSQL cluster
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+
+  ElastiCacheEndpoint:
+    Description: Endpoint of the ElastiCache Redis cluster
+    Value: !GetAtt ElastiCacheCluster.RedisEndpoint.Address
