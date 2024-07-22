@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: CloudFormation template for RDS PostgreSQL, ElastiCache Redis, Lambda, and HTTP API Gateway
+
+Parameters:
+  VPCID:
+    Type: AWS::EC2::VPC::Id
+    Description: ID of the existing VPC
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of subnet IDs in the VPC
+
+  LambdaSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group ID for Lambda function
+
+  DBSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group ID for RDS
+
+  CacheSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group ID for ElastiCache
+
+  MasterUsername:
+    Type: String
+    Description: Master username for RDS PostgreSQL
+
+  MasterPassword:
+    Type: String
+    NoEcho: true
+    Description: Master password for RDS PostgreSQL
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.large
+    Description: Instance class for RDS PostgreSQL
+
+  CacheNodeType:
+    Type: String
+    Default: cache.t3.medium
+    Description: Node type for ElastiCache Redis
+
+Globals:
+  Function:
+    Timeout: 30
+    VpcConfig:
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds:
+        - !Ref LambdaSecurityGroupID
+
+Resources:
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS PostgreSQL
+      VpcId: !Ref VPCID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroupID
+
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ElastiCache Redis
+      VpcId: !Ref VPCID
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref LambdaSecurityGroupID
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: postgres
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: !Ref MasterPassword
+      DBInstanceIdentifier: shortlink-db
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      AllocatedStorage: 20
+      BackupRetentionPeriod: 7
+      PubliclyAccessible: false
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds: !Ref SubnetIds
+
+  ElastiCacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      CacheNodeType: !Ref CacheNodeType
+      Engine: redis
+      NumCacheNodes: 1
+      ClusterName: shortlink-cache
+      VpcSecurityGroupIds:
+        - !Ref CacheSecurityGroup
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: shortlink-cache-subnet-group
+      Description: Subnet group for ElastiCache
+      SubnetIds: !Ref SubnetIds
+
+  LambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ShortLinkResolverFunction
+      Handler: index.handler
+      Runtime: nodejs18.x
+      CodeUri:
+        ZipFile: |
+          const { URL } = require('url');
+
+          exports.handler = async (event) => {
+              // Define the base URL to redirect to
+              const redirectToUrl = 'https://www.google.com';
+
+              // Extract the short link from the request path
+              const shortLinkPath = event.pathParameters ? event.pathParameters.shortlink : '';
+
+              // Create the URL object to set up the redirection response
+              const redirectUrl = new URL(redirectToUrl);
+
+              // Return the redirect response
+              return {
+                  statusCode: 302, // HTTP status code for redirection
+                  headers: {
+                      Location: redirectUrl.toString() // The URL to redirect to
+                  },
+                  body: JSON.stringify({
+                      message: `Redirecting to ${redirectUrl.toString()}`
+                  })
+              };
+          };
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambdaVPCAccessExecutionRole
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: ShortLinkApi
+      StageName: Prod
+
+  HttpApiRoute:
+    Type: AWS::Serverless::HttpApi::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /shortlink/{shortlink}"
+      Target: !Sub "integrations/${LambdaFunction.Arn}"
+
+  LambdaApiGatewayInvoke:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaFunction
+      Principal: apigateway.amazonaws.com
+
+Outputs:
+  RDSInstanceEndpoint:
+    Description: Endpoint of the RDS instance
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  ElastiCacheEndpoint:
+    Description: Endpoint of the ElastiCache cluster
+    Value: !GetAtt ElastiCacheCluster.RedisEndpoint.Address
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt LambdaFunction.Arn
+
+  ApiGatewayURL:
+    Description: URL of the API Gateway
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/shortlink
