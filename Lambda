@@ -1,0 +1,114 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: SAM Template for Lambda Function and API Gateway
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 30
+    MemorySize: 128
+    VpcConfig:
+      SecurityGroupIds:
+        - !Ref LambdaSecurityGroup
+      SubnetIds: !Ref SubnetIds
+
+Resources:
+  # Security Group for Lambda
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow access to Redis and Aurora
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref RedisSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref DBClusterSecurityGroup
+
+  # Lambda Function
+  ShortLinkLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          REDIS_HOST: !Ref RedisEndpoint
+          REDIS_PORT: '6379'
+          RDS_HOST: !Ref AuroraDBClusterEndpoint
+          RDS_PORT: !Ref AuroraDBClusterPort
+          RDS_USER: !Ref DBUsername
+          RDS_PASSWORD: !Ref DBPassword
+          RDS_DBNAME: 'shortlinkdb'
+      CodeUri: .
+      Events:
+        ShortLinkApi:
+          Type: Api
+          Properties:
+            Path: /{short_id}
+            Method: get
+
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecute
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - rds-db:connect
+                  - elasticache:DescribeCacheClusters
+                  - elasticache:DescribeCacheSubnetGroups
+                Resource: "*"
+
+  # API Gateway
+  ShortLinkApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          title: "ShortLink API"
+          version: "1.0"
+        paths:
+          /{short_id}:
+            get:
+              produces:
+                - application/json
+              responses:
+                200:
+                  description: "Successful Response"
+                404:
+                  description: "Not Found"
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri:
+                  Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ShortLinkLambdaFunction.Arn}/invocations
+                credentials: !GetAtt LambdaExecutionRole.Arn
+
+Outputs:
+  ApiUrl:
+    Description: "The URL of the API Gateway"
+    Value: 
+      Fn::Sub: 
+        - https://${ShortLinkApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/
+        - ShortLinkApi: !Ref ShortLinkApi
