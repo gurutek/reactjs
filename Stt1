@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: CloudFormation template for Lambda, API Gateway, and CloudWatch in a non-production environment.
+
+Parameters:
+  VPCID:
+    Type: AWS::EC2::VPC::Id
+    Description: ID of the existing VPC
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of subnet IDs in the VPC
+
+  LambdaSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group ID for Lambda function
+
+  RdsSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group ID for RDS
+
+  CacheSecurityGroupID:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Security group ID for ElastiCache Redis
+
+  RdsEndpoint:
+    Type: String
+    Description: Endpoint of the RDS PostgreSQL instance
+
+  CacheEndpoint:
+    Type: String
+    Description: Endpoint of the ElastiCache Redis cluster
+
+  RdsUsername:
+    Type: String
+    Description: Username for the RDS PostgreSQL instance
+
+  RdsPassword:
+    Type: String
+    NoEcho: true
+    Description: Password for the RDS PostgreSQL instance
+
+Globals:
+  Function:
+    Timeout: 30
+    VpcConfig:
+      SubnetIds: !Ref SubnetIds
+      SecurityGroupIds:
+        - !Ref LambdaSecurityGroupID
+
+Resources:
+  LambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ShortLinkResolverFunction
+      Handler: index.handler
+      Runtime: nodejs18.x
+      CodeUri:
+        ZipFile: |
+          const { Client } = require('pg');
+          const Redis = require('ioredis');
+
+          exports.handler = async (event) => {
+              // Connect to Aurora PostgreSQL
+              const pgClient = new Client({
+                  host: process.env.RDS_ENDPOINT,
+                  user: process.env.RDS_USER,
+                  password: process.env.RDS_PASSWORD,
+                  database: 'your_database'
+              });
+              await pgClient.connect();
+
+              // Connect to ElastiCache Redis
+              const redisClient = new Redis({
+                  port: 6379,
+                  host: process.env.CACHE_ENDPOINT
+              });
+
+              // Perform your operations with pgClient and redisClient here
+
+              await pgClient.end();
+              redisClient.quit();
+
+              // For demonstration, redirecting to Google
+              const redirectToUrl = 'https://www.google.com';
+              return {
+                  statusCode: 302,
+                  headers: {
+                      Location: redirectToUrl
+                  },
+                  body: JSON.stringify({
+                      message: `Redirecting to ${redirectToUrl}`
+                  })
+              };
+          };
+      Environment:
+        Variables:
+          RDS_ENDPOINT: !Ref RdsEndpoint
+          RDS_USER: !Ref RdsUsername
+          RDS_PASSWORD: !Ref RdsPassword
+          CACHE_ENDPOINT: !Ref CacheEndpoint
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambdaVPCAccessExecutionRole
+      Events:
+        HttpApi:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            RouteKey: "GET /shortlink/{shortlink}"
+            Target: !Sub "integrations/${LambdaFunction.Arn}"
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: ShortLinkApi
+      StageName: Prod
+
+  LambdaApiGatewayInvoke:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LambdaFunction
+      Principal: apigateway.amazonaws.com
+
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${LambdaFunction}"
+
+Outputs:
+  ApiGatewayURL:
+    Description: URL of the API Gateway
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/shortlink
+
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function
+    Value: !GetAtt LambdaFunction.Arn
