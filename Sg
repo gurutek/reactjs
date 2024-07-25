@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudFormation template for creating security groups for Lambda, RDS, and ElastiCache
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: 'The ID of the VPC where the security groups will be created'
+
+  AppName:
+    Type: String
+    Description: 'The name of the application'
+    Default: 'ShortLinkApp'
+
+  Environment:
+    Type: String
+    Description: 'The deployment environment (dev, uat, prod)'
+    AllowedValues: 
+      - dev
+      - uat
+      - prod
+    Default: 'dev'
+
+Resources:
+  LambdaSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for Lambda functions'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          FromPort: -1
+          ToPort: -1
+          SourceSecurityGroupId: !Ref ApiGatewaySecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          DestinationSecurityGroupId: !Ref ElastiCacheSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          DestinationSecurityGroupId: !Ref RdsSecurityGroup
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+
+  ElastiCacheSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for ElastiCache Redis'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      SecurityGroupEgress: []
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+
+  RdsSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for RDS'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      SecurityGroupEgress: []
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+
+  ApiGatewaySecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for API Gateway'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress: []
+      SecurityGroupEgress: []
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+
+Outputs:
+  LambdaSecurityGroupId:
+    Description: "ID of the Lambda security group"
+    Value: !Ref LambdaSecurityGroup
+
+  ElastiCacheSecurityGroupId:
+    Description: "ID of the ElastiCache security group"
+    Value: !Ref ElastiCacheSecurityGroup
+
+  RdsSecurityGroupId:
+    Description: "ID of the RDS security group"
+    Value: !Ref RdsSecurityGroup
+
+  ApiGatewaySecurityGroupId:
+    Description: "ID of the API Gateway security group"
+    Value: !Ref ApiGatewaySecurityGroup
