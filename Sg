@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  CloudFormation template for creating security groups for Lambda, RDS, and ElastiCache
+  CloudFormation template for creating security groups for Lambda, RDS, ElastiCache, and intermediary access
 
 Parameters:
   VpcId:
@@ -27,20 +27,15 @@ Resources:
     Properties:
       GroupDescription: 'Security group for Lambda functions'
       VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: -1
-          FromPort: -1
-          ToPort: -1
-          SourceSecurityGroupId: !Ref ApiGatewaySecurityGroup
       SecurityGroupEgress:
         - IpProtocol: tcp
           FromPort: 6379
           ToPort: 6379
-          DestinationSecurityGroupId: !Ref ElastiCacheSecurityGroup
+          DestinationSecurityGroupId: !Ref ElastiCacheAccessGroup
         - IpProtocol: tcp
           FromPort: 5432
           ToPort: 5432
-          DestinationSecurityGroupId: !Ref RdsSecurityGroup
+          DestinationSecurityGroupId: !Ref RdsAccessGroup
       Tags:
         - Key: appname
           Value: !Ref AppName
@@ -52,12 +47,6 @@ Resources:
     Properties:
       GroupDescription: 'Security group for ElastiCache Redis'
       VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 6379
-          ToPort: 6379
-          SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      SecurityGroupEgress: []
       Tags:
         - Key: appname
           Value: !Ref AppName
@@ -69,12 +58,38 @@ Resources:
     Properties:
       GroupDescription: 'Security group for RDS'
       VpcId: !Ref VpcId
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+
+  ElastiCacheAccessGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for ElastiCache access from Lambda'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+
+  RdsAccessGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Security group for RDS access from Lambda'
+      VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 5432
           ToPort: 5432
           SourceSecurityGroupId: !Ref LambdaSecurityGroup
-      SecurityGroupEgress: []
       Tags:
         - Key: appname
           Value: !Ref AppName
@@ -86,8 +101,6 @@ Resources:
     Properties:
       GroupDescription: 'Security group for API Gateway'
       VpcId: !Ref VpcId
-      SecurityGroupIngress: []
-      SecurityGroupEgress: []
       Tags:
         - Key: appname
           Value: !Ref AppName
@@ -98,15 +111,35 @@ Outputs:
   LambdaSecurityGroupId:
     Description: "ID of the Lambda security group"
     Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaSecurityGroupId"
 
   ElastiCacheSecurityGroupId:
     Description: "ID of the ElastiCache security group"
     Value: !Ref ElastiCacheSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ElastiCacheSecurityGroupId"
 
   RdsSecurityGroupId:
     Description: "ID of the RDS security group"
     Value: !Ref RdsSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-RdsSecurityGroupId"
+
+  ElastiCacheAccessGroupId:
+    Description: "ID of the ElastiCache access security group"
+    Value: !Ref ElastiCacheAccessGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ElastiCacheAccessGroupId"
+
+  RdsAccessGroupId:
+    Description: "ID of the RDS access security group"
+    Value: !Ref RdsAccessGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-RdsAccessGroupId"
 
   ApiGatewaySecurityGroupId:
     Description: "ID of the API Gateway security group"
     Value: !Ref ApiGatewaySecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiGatewaySecurityGroupId"
