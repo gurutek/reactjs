@@ -1,0 +1,137 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create an API Gateway with a Lambda function for resolving short links.
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The ID of the existing VPC where the Lambda function will be deployed.
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: The IDs of the subnets in the VPC.
+
+  SecurityGroupIds:
+    Type: List<AWS::EC2::SecurityGroup::Id>
+    Description: The IDs of the security groups for the Lambda function.
+
+  Environment:
+    Type: String
+    Description: The environment where the resources are deployed (e.g., dev, uat, prod).
+    Default: dev
+
+  AppName:
+    Type: String
+    Description: The name of your application.
+    Default: ShortLinkResolver
+
+Resources:
+  # IAM Role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - rds-data:ExecuteStatement
+                  - rds-data:BatchExecuteStatement
+                  - rds-data:BeginTransaction
+                  - rds-data:CommitTransaction
+                  - rds-data:RollbackTransaction
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - elasticache:*
+                Resource: "*"
+
+  # Lambda Function
+  ShortLinkResolverFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AppName}-resolver"
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs18.x
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref SecurityGroupIds
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            const shortId = event.pathParameters.short_id;
+
+            // Redirect to Google site (this is a placeholder for actual logic)
+            return {
+              statusCode: 301,
+              headers: {
+                Location: `https://www.google.com/search?q=${shortId}`
+              }
+            };
+          };
+
+  # API Gateway
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${AppName}-api"
+
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: short
+      RestApiId: !Ref ApiGateway
+
+  ApiShortIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !Ref ApiResource
+      PathPart: '{short_id}'
+      RestApiId: !Ref ApiGateway
+
+  ApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      ResourceId: !Ref ApiShortIdResource
+      RestApiId: !Ref ApiGateway
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionArn}/invocations
+          - LambdaFunctionArn: !GetAtt ShortLinkResolverFunction.Arn
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+    DependsOn: ApiMethod
+
+Outputs:
+  ApiEndpoint:
+    Description: URL of the API Gateway
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/short/{short_id}"
+    Export:
+      Name: !Sub "${AppName}-ApiEndpoint"
