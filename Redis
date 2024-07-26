@@ -1,0 +1,174 @@
+Here's an updated CloudFormation template for creating an ElastiCache replication group, including `Metadata`, `Mappings`, and exporting necessary values for cross-stack references:
+
+```yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This template creates an ElastiCache replication group with an authentication token in the us-east-1a zone.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "ElastiCache Settings"
+        Parameters:
+          - VpcId
+          - ElastiCacheSecurityGroupId
+          - AuthToken
+          - CacheNodeType
+          - ReplicationGroupId
+          - SnapshotRetentionLimit
+          - SnapshotWindow
+    ParameterLabels:
+      VpcId:
+        default: "VPC ID"
+      ElastiCacheSecurityGroupId:
+        default: "ElastiCache Security Group ID"
+      AuthToken:
+        default: "ElastiCache Auth Token"
+      CacheNodeType:
+        default: "Cache Node Type"
+      ReplicationGroupId:
+        default: "Replication Group ID"
+      SnapshotRetentionLimit:
+        default: "Snapshot Retention Limit (days)"
+      SnapshotWindow:
+        default: "Snapshot Window (HH:MM-HH:MM)"
+      Environment:
+        default: "Environment"
+      AppName:
+        default: "Application Name"
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The ID of the existing VPC where ElastiCache will be deployed.
+
+  ElastiCacheSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: The ID of the existing security group that controls access to ElastiCache.
+
+  AuthToken:
+    Type: String
+    Description: The authentication token required to access the ElastiCache cluster.
+
+  CacheNodeType:
+    Type: String
+    Default: cache.t3.medium
+    Description: The type of cache node (e.g., cache.t3.medium).
+
+  ReplicationGroupId:
+    Type: String
+    Description: The unique ID for your replication group.
+
+  SnapshotRetentionLimit:
+    Type: Number
+    Default: 7
+    Description: Number of days to retain automated snapshots before they are deleted.
+
+  SnapshotWindow:
+    Type: String
+    Default: 05:00-09:00
+    Description: The daily time range for creating automated snapshots (e.g., 05:00-09:00).
+
+  Environment:
+    Type: String
+    Description: The environment where the resources are deployed (e.g., dev, uat, prod).
+    Default: dev
+
+  AppName:
+    Type: String
+    Description: The name of your application.
+    Default: ShortLinkResolver
+
+  SubnetId1:
+    Type: AWS::EC2::Subnet::Id
+    Description: The ID of the first subnet in the VPC.
+
+  SubnetId2:
+    Type: AWS::EC2::Subnet::Id
+    Description: The ID of the second subnet in the VPC.
+
+Resources:
+  ElastiCacheReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupId: !Ref ReplicationGroupId
+      ReplicationGroupDescription: ElastiCache replication group for the application
+      CacheNodeType: !Ref CacheNodeType
+      Engine: redis
+      EngineVersion: 7.x # Specify the Redis engine version
+      NumNodeGroups: 1
+      ReplicasPerNodeGroup: 0
+      AutomaticFailoverEnabled: true
+      TransitEncryptionEnabled: true
+      AtRestEncryptionEnabled: true
+      AuthToken: !Ref AuthToken
+      SnapshotRetentionLimit: !Ref SnapshotRetentionLimit
+      SnapshotWindow: !Ref SnapshotWindow
+      SecurityGroupIds:
+        - !Ref ElastiCacheSecurityGroupId
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub "${AppName}-cache-subnet-group"
+      CacheSubnetGroupDescription: Subnet group for ElastiCache
+      SubnetIds:
+        - !Ref SubnetId1
+        - !Ref SubnetId2
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+
+Outputs:
+  ElastiCacheReplicationGroupId:
+    Description: The ID of the ElastiCache replication group
+    Value: !Ref ElastiCacheReplicationGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ElastiCacheReplicationGroupId"
+
+  ElastiCacheEndpoint:
+    Description: The endpoint address of the ElastiCache replication group
+    Value: !GetAtt ElastiCacheReplicationGroup.PrimaryEndPoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-ElastiCacheEndpoint"
+
+  ElastiCachePort:
+    Description: The port number of the ElastiCache replication group
+    Value: !GetAtt ElastiCacheReplicationGroup.PrimaryEndPoint.Port
+    Export:
+      Name: !Sub "${AWS::StackName}-ElastiCachePort"
+
+  CacheSubnetGroupId:
+    Description: The ID of the ElastiCache subnet group
+    Value: !Ref CacheSubnetGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-CacheSubnetGroupId"
+```
+
+### Detailed Explanation:
+
+- **Metadata**:
+  - Provides user-friendly labels and groups for parameters to improve readability in the AWS CloudFormation console.
+
+- **Parameters**:
+  - Define the inputs required for the stack, including VPC ID, security group ID, auth token, and cache settings.
+
+- **Resources**:
+  - **`ElastiCacheReplicationGroup`**: Defines the ElastiCache replication group with settings like node type, encryption, and snapshot configurations.
+  - **`CacheSubnetGroup`**: Specifies the subnets where the ElastiCache cluster will be deployed.
+
+- **Outputs**:
+  - **`ElastiCacheReplicationGroupId`**: Exports the replication group ID for cross-stack reference.
+  - **`ElastiCacheEndpoint`**: Exports the endpoint address of the replication group for cross-stack reference.
+  - **`ElastiCachePort`**: Exports the port number used to connect to the ElastiCache cluster.
+  - **`CacheSubnetGroupId`**: Exports the ID of the subnet group for cross-stack reference.
+
+This template ensures that all necessary configurations and security settings are applied, and it provides outputs for easy integration with other CloudFormation stacks.
