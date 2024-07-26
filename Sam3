@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: SAM template to create an HTTP API Gateway with Lambda function to resolve short links, including provisioned concurrency.
+
+Globals:
+  Function:
+    Timeout: 10
+    Runtime: nodejs18.x
+    Handler: index.handler
+    MemorySize: 128
+    # Define a global environment variable if needed
+    Environment:
+      Variables:
+        ENVIRONMENT: dev
+
+Resources:
+  # Lambda Function
+  ShortLinkResolverFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-ShortLinkResolver"
+      CodeUri:
+        ZipFile: |
+          exports.handler = async (event) => {
+            const shortId = event.pathParameters ? event.pathParameters.short_id : 'default_id';
+            return {
+              statusCode: 301,
+              headers: {
+                Location: `https://www.google.com/search?q=${shortId}`
+              }
+            };
+          };
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: 
+          - !Ref ExistingSecurityGroupId
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rds-data:ExecuteStatement
+                - rds-data:BatchExecuteStatement
+                - rds-data:BeginTransaction
+                - rds-data:CommitTransaction
+                - rds-data:RollbackTransaction
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - elasticache:*
+              Resource: "*"
+
+  # HTTP API Gateway
+  HttpApiGateway:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Name: !Sub "${AWS::StackName}-HttpApi"
+      StageName: prod
+      DefinitionBody:
+        openapi: '3.0.1'
+        info:
+          title: !Sub "${AWS::StackName} HTTP API"
+          version: '1.0'
+        paths:
+          /short/{short_id}:
+            get:
+              summary: "Resolve short link"
+              operationId: "GetShortLink"
+              parameters:
+                - name: short_id
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+              responses:
+                '301':
+                  description: "Redirect to Google"
+                  headers:
+                    Location:
+                      type: string
+              x-amazon-apigateway-integration:
+                type: aws_proxy
+                httpMethod: POST
+                uri: !Sub
+                  - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionArn}/invocations
+                  - LambdaFunctionArn: !GetAtt ShortLinkResolverFunction.Arn
+
+  # Lambda Alias for Provisioned Concurrency
+  LambdaAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref ShortLinkResolverFunction
+      FunctionVersion: !GetAtt ShortLinkResolverFunction.Version
+      Name: Prod
+
+  # Provisioned Concurrency Configuration
+  ProvisionedConcurrencyConfig:
+    Type: AWS::Lambda::ProvisionedConcurrencyConfig
+    Properties:
+      FunctionName: !Ref ShortLinkResolverFunction
+      Qualifier: !Ref LambdaAlias
+      ProvisionedConcurrentExecutions: 3
+
+Outputs:
+  ApiEndpoint:
+    Description: URL of the HTTP API Gateway
+    Value: !Sub "https://${HttpApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/short/{short_id}"
