@@ -1,0 +1,192 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create an Amazon Aurora PostgreSQL cluster with 2 instances, each with 20 GB of storage, in the us-east-1a availability zone.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Database Settings"
+        Parameters:
+          - VpcId
+          - SubnetIds
+          - DBClusterIdentifier
+          - DBName
+          - MasterUsername
+          - MasterUserPassword
+          - DBInstanceClass
+          - EngineVersion
+          - DBSecurityGroupId
+          - Environment
+          - AppName
+    ParameterLabels:
+      VpcId:
+        default: "VPC ID"
+      SubnetIds:
+        default: "Subnet IDs"
+      DBClusterIdentifier:
+        default: "Database Cluster Identifier"
+      DBName:
+        default: "Database Name"
+      MasterUsername:
+        default: "Master Username"
+      MasterUserPassword:
+        default: "Master User Password"
+      DBInstanceClass:
+        default: "Instance Class"
+      EngineVersion:
+        default: "Engine Version"
+      DBSecurityGroupId:
+        default: "DB Security Group ID"
+      Environment:
+        default: "Environment"
+      AppName:
+        default: "Application Name"
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The ID of the existing VPC where the Aurora cluster will be deployed.
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: The IDs of the subnets in the VPC.
+
+  DBClusterIdentifier:
+    Type: String
+    Description: The identifier for the Aurora cluster.
+
+  DBName:
+    Type: String
+    Description: The name of the database to create.
+
+  MasterUsername:
+    Type: String
+    Description: The master username for the database.
+
+  MasterUserPassword:
+    Type: String
+    NoEcho: true
+    Description: The master user password for the database.
+
+  DBInstanceClass:
+    Type: String
+    Default: db.r5.large
+    Description: The compute and memory capacity of the DB instances (e.g., db.r5.large).
+
+  EngineVersion:
+    Type: String
+    Default: 13.3
+    Description: The Aurora PostgreSQL engine version.
+
+  DBSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: The ID of the security group for the Aurora cluster.
+
+  Environment:
+    Type: String
+    Description: The environment where the resources are deployed (e.g., dev, uat, prod).
+    Default: dev
+
+  AppName:
+    Type: String
+    Description: The name of your application.
+    Default: ShortLinkResolver
+
+Mappings:
+  AWSRegionToAMI:
+    us-east-1:
+      HVM64: ami-0ff8a91507f77f867
+
+Resources:
+  # Aurora DB Cluster
+  DBCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: !Ref DBClusterIdentifier # Unique identifier for the Aurora cluster
+      DatabaseName: !Ref DBName # Name of the database to create
+      Engine: aurora-postgresql # Database engine type (Aurora PostgreSQL)
+      EngineVersion: !Ref EngineVersion # Version of the Aurora PostgreSQL engine
+      MasterUsername: !Ref MasterUsername # Master username for the database
+      MasterUserPassword: !Ref MasterUserPassword # Master password for the database
+      VpcSecurityGroupIds:
+        - !Ref DBSecurityGroupId # Security group ID to control access to the cluster
+      DBSubnetGroupName: !Ref DBSubnetGroup # Subnet group for the Aurora cluster
+      BackupRetentionPeriod: 7 # Number of days to retain automated backups
+      PreferredBackupWindow: 03:00-04:00 # Preferred time window for daily backups
+      PreferredMaintenanceWindow: sun:04:00-sun:05:00 # Preferred time window for maintenance
+      StorageEncrypted: true # Whether the storage is encrypted
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+    DeletionPolicy: Snapshot # Create a snapshot before deleting the cluster
+    UpdateReplacePolicy: Snapshot # Create a snapshot before replacing the cluster during updates
+
+  # Aurora DB Instance 1
+  DBInstance1:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DBCluster # Identifier of the DB cluster to associate the instance with
+      DBInstanceClass: !Ref DBInstanceClass # Compute and memory capacity of the DB instance
+      Engine: aurora-postgresql # Database engine type (Aurora PostgreSQL)
+      DBSubnetGroupName: !Ref DBSubnetGroup # Subnet group for the DB instance
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+    DeletionPolicy: Delete # Delete the instance when the stack is deleted
+
+  # Aurora DB Instance 2
+  DBInstance2:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DBCluster # Identifier of the DB cluster to associate the instance with
+      DBInstanceClass: !Ref DBInstanceClass # Compute and memory capacity of the DB instance
+      Engine: aurora-postgresql # Database engine type (Aurora PostgreSQL)
+      DBSubnetGroupName: !Ref DBSubnetGroup # Subnet group for the DB instance
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+    DeletionPolicy: Delete # Delete the instance when the stack is deleted
+
+  # Subnet group for Aurora
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for Aurora DB cluster
+      SubnetIds: !Ref SubnetIds # List of subnet IDs for the DB subnet group
+      DBSubnetGroupName: !Sub "${AppName}-db-subnet-group" # Name of the DB subnet group
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+
+Outputs:
+  DBClusterIdentifierOutput:
+    Description: The identifier of the Aurora cluster
+    Value: !Ref DBCluster
+    Export:
+      Name: !Sub "${AWS::StackName}-DBClusterIdentifier"
+
+  DBClusterEndpoint:
+    Description: The endpoint address of the Aurora cluster
+    Value: !GetAtt DBCluster.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-DBClusterEndpoint"
+
+  DBClusterPort:
+    Description: The port number of the Aurora cluster
+    Value: !GetAtt DBCluster.Endpoint.Port
+    Export:
+      Name: !Sub "${AWS::StackName}-DBClusterPort"
+
+  DBSubnetGroupNameOutput:
+    Description: The name of the DB subnet group
+    Value: !Ref DBSubnetGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-DBSubnetGroupName"
