@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Security groups for Lambda, RDS PostgreSQL, ElastiCache, and API Gateway to resolve short links with actual links
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Network Configuration"
+        Parameters:
+          - VpcId
+          - AllowedIP1
+          - AllowedIP2
+      - Label:
+          default: "Tagging"
+        Parameters:
+          - AppName
+          - Environment
+          - UserId
+          - Role
+    ParameterLabels:
+      VpcId:
+        default: "VPC ID"
+      AllowedIP1:
+        default: "First Allowed IP Address"
+      AllowedIP2:
+        default: "Second Allowed IP Address"
+      AppName:
+        default: "Application Name"
+      Environment:
+        default: "Environment"
+      UserId:
+        default: "User ID"
+      Role:
+        default: "Role"
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: The ID of the existing VPC
+
+  AllowedIP1:
+    Type: String
+    Description: The first IP address allowed to access RDS and Redis
+    Default: "203.0.113.0/24" # Change this to your specific IP address or CIDR block
+
+  AllowedIP2:
+    Type: String
+    Description: The second IP address allowed to access RDS and Redis
+    Default: "198.51.100.0/24" # Change this to your specific IP address or CIDR block
+
+  AppName:
+    Type: String
+    Description: The name of the application
+    Default: "ShortLinkResolver"
+
+  Environment:
+    Type: String
+    Description: The environment (e.g., dev, uat, prod)
+    Default: "dev"
+
+  UserId:
+    Type: String
+    Description: The user ID
+    Default: "user123"
+
+  Role:
+    Type: String
+    Description: The role
+    Default: "developer"
+
+Resources:
+  # Security group for Lambda functions
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda functions
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        # Allow Lambda to access RDS PostgreSQL
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref RdsSecurityGroup
+        # Allow Lambda to access ElastiCache (Redis)
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref ElastiCacheSecurityGroup
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+        - Key: userid
+          Value: !Ref UserId
+        - Key: role
+          Value: !Ref Role
+
+  # Security group for RDS PostgreSQL
+  RdsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS PostgreSQL
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        # Allow RDS access from Lambda
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+        # Allow RDS access from two specific IP addresses
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref AllowedIP1
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref AllowedIP2
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+        - Key: userid
+          Value: !Ref UserId
+        - Key: role
+          Value: !Ref Role
+
+  # Security group for ElastiCache (Redis)
+  ElastiCacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ElastiCache
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        # Allow ElastiCache access from Lambda
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+        # Allow ElastiCache access from two specific IP addresses
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref AllowedIP1
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: !Ref AllowedIP2
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+        - Key: userid
+          Value: !Ref UserId
+        - Key: role
+          Value: !Ref Role
+
+  # Security group for API Gateway
+  ApiGatewaySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for API Gateway
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        # Allow public access on port 80
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        # Allow public access on port 443
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: appname
+          Value: !Ref AppName
+        - Key: environment
+          Value: !Ref Environment
+        - Key: userid
+          Value: !Ref UserId
+        - Key: role
+          Value: !Ref Role
+
+Outputs:
+  LambdaSecurityGroupId:
+    Description: Security Group ID for Lambda
+    Value: !Ref LambdaSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaSecurityGroupId"
+
+  RdsSecurityGroupId:
+    Description: Security Group ID for RDS
+    Value: !Ref RdsSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-RdsSecurityGroupId"
+
+  ElastiCacheSecurityGroupId:
+    Description: Security Group ID for ElastiCache
+    Value: !Ref ElastiCacheSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ElastiCacheSecurityGroupId"
+
+  ApiGatewaySecurityGroupId:
+    Description: Security Group ID for API Gateway
+    Value: !Ref ApiGatewaySecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiGatewaySecurityGroupId"
+
+  StackName:
+    Description: The name of the stack
+    Value: !Ref AWS::StackName
